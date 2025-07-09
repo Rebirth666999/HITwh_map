@@ -1,6 +1,0 @@
-﻿  源.cpp
-F:\VisualStudioProjects\计算机科学与工程设计实践\源.cpp(680,71): warning C4474: swprintf_s: 格式字符串中传递的参数太多
-      F:\VisualStudioProjects\计算机科学与工程设计实践\源.cpp(680,71):
-      占位符和其参数预计 0 可变参数，但提供的却是 1 参数
-  
-  计算机科学与工程设计实践.vcxproj -> F:\VisualStudioProjects\计算机科学与工程设计实践\x64\Debug\计算机科学与工程设计实践.exe

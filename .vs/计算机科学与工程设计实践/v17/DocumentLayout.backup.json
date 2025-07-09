@@ -14,12 +14,8 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 1,
+          "SelectedChildIndex": 0,
           "Children": [
-            {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{aa2115a1-9712-457b-9047-dbb71ca2cdd2}"
-            },
             {
               "$type": "Document",
               "DocumentIndex": 0,
@@ -28,7 +24,7 @@
               "RelativeDocumentMoniker": "\u6E90.cpp",
               "ToolTip": "F:\\VisualStudioProjects\\\u8BA1\u7B97\u673A\u79D1\u5B66\u4E0E\u5DE5\u7A0B\u8BBE\u8BA1\u5B9E\u8DF5\\\u6E90.cpp",
               "RelativeToolTip": "\u6E90.cpp",
-              "ViewState": "AgIAAEEHAAAAAAAAAAAAAOUEAAADAAAAAAAAAA==",
+              "ViewState": "AgIAAD4HAAAAAAAAAAAAAOYGAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2025-07-03T02:12:03.224Z",
               "EditorCaption": ""
