@@ -1,0 +1,1885 @@
+#ifdef _MSC_VER
+// 针对MSVC编译器的预处理指令
+#pragma comment(linker, "/SUBSYSTEM:WINDOWS")  // 指定为Windows子系统
+#pragma comment(linker, "/ENTRY:mainCRTStartup") // 设置入口点为main
+#pragma comment(lib, "legacy_stdio_definitions.lib") // 链接传统标准库
+#pragma comment(lib, "gdi32.lib")  // 链接GDI图形库
+#pragma comment(lib, "user32.lib")  // 链接用户界面库
+#pragma comment(lib, "kernel32.lib") // 链接内核库
+#pragma comment(lib, "msimg32.lib") // 链接高级图形库
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <windows.h>
+#include <tchar.h>
+#include <shlwapi.h> // 文件路径处理库
+#pragma comment(lib, "shlwapi.lib") // 链接路径处理库
+
+// 边信息结构体
+typedef struct {
+    int src;    // 源顶点ID
+    int dest;   // 目标顶点ID
+} Edge;
+
+// 建筑信息结构体
+typedef struct {
+    int id;             // 建筑唯一标识符
+    char name[50];      // 建筑名称
+    char description[100]; // 建筑描述
+    int x, y;           // 建筑在地图上的坐标
+} Building;
+
+// 邻接表节点（用于路径拓扑）
+typedef struct AdjListNode {
+    int dest;           // 目标建筑ID
+    int weight;         // 路径权重（距离）
+    struct AdjListNode* next; // 下一个节点指针
+} AdjListNode;
+
+// 邻接表头节点
+typedef struct {
+    int building_id;    // 建筑ID
+    AdjListNode* head;  // 邻接表头指针
+} AdjListHead;
+
+// 图结构
+typedef struct {
+    int V;              // 顶点数量
+    int E;              // 边数量
+    AdjListHead* array; // 邻接表数组
+    Edge* edges;        // 边数组
+} Graph;
+
+// 哈希表节点
+typedef struct HashNode {
+    int key;            // 建筑ID
+    Building building;  // 建筑数据
+    struct HashNode* next; // 下一个节点指针
+} HashNode;
+
+// 哈希表结构
+typedef struct {
+    int size;           // 哈希表大小
+    HashNode** table;   // 哈希桶数组
+} HashTable;
+
+#define HASH_SIZE 100     // 哈希表大小
+#define MAX_BUILDINGS 100 // 最大建筑数量
+#define WINDOW_WIDTH 600  // 窗口宽度
+#define WINDOW_HEIGHT 900 // 窗口高度
+#define DATA_FILENAME _T("campus_data.txt") // 数据文件名
+#define EDGE_FILENAME _T("campus_edges.txt")
+
+// 全局变量声明
+Building buildings[MAX_BUILDINGS]; // 建筑数组
+Graph* campus_graph = NULL;        // 校园路径图
+HashTable* building_table = NULL;  // 建筑哈希表
+static int* shortest_path = NULL;  // 最短路径数组
+static int path_size = 0;          // 路径长度
+HBITMAP campus_map = NULL;         // 校园地图位图
+HWND hwnd;                         // 主窗口句柄
+static bool is_edit_mode = false;  // 编辑模式标志
+static int selected_building_id = -1; // 当前选中的建筑ID
+static int edit_edge_mode = 0;       // 0:无操作 1:添加边 2:删除边
+static int first_building_id = -1;   // 边编辑的第一个建筑ID
+
+// 函数声明
+Graph* createGraph(int V, int E);
+void addEdge(Graph* graph, int src, int dest, int weight, int edge_index);
+HashTable* createHashTable(int size);
+int hash(int key);
+void hashInsert(HashTable* hashtable, Building building);
+Building* hashSearch(HashTable* hashtable, int key);
+void dijkstra(Graph* graph, int src, int* dist, int* prev);
+int* getShortestPath(int* prev, int dest, int* path_size);
+void loadCampusMap();
+void initializeCampusData();
+void drawCampusMap(HDC hdc);
+void drawPath(HDC hdc, int* path, int path_size);
+void showBuildingInfo(HDC hdc, int building_id);
+LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+void saveBuildingData();  // 保存建筑数据
+void loadBuildingData();  // 加载建筑数据
+void createDefaultBuildings(); // 创建默认建筑数据
+void createDefaultEdges(Graph** graph); // 创建默认边数据
+void saveEdgeData(Graph* graph); // 保存边数据
+void cleanupResources(); // 清理资源
+
+
+/**
+ * 创建默认建筑数据
+ */
+void createDefaultBuildings() {
+    // 初始化为无效值
+    for (int i = 0; i < MAX_BUILDINGS; i++) {
+        buildings[i].id = -1;
+    }
+
+    // 创建有效建筑数据
+    Building b0 = { 0, "主楼", "教务处、教师办公室", 415, 580 };
+    Building b1 = { 1, "图书馆", "图书借阅与自习、网络中心", 235,100 };
+    Building b2 = { 2, "宁学楼", "教室", 220,172 };
+    Building b3 = { 3, "明学楼", "教室", 262,562 };
+    Building b4 = { 4, "功学楼", "教室", 318,552 };
+    Building b5 = { 5, "博学楼", "教室", 320,502 };
+    Building b6 = { 6, "安学楼", "教室", 477,507 };
+    Building b7 = { 7, "研究院", "科研实验室", 441,750 };
+    Building b8 = { 8, "田径场", "田径场", 266,611 };
+    Building b9 = { 9, "篮球场", "篮球场", 215,650 };
+    Building b10 = { 10, "轮滑场", "轮滑场", 335,590 };
+    Building b11 = { 11, "排球场", "排球场", 335,632 };
+    Building b12 = { 12, "网球场", "网球场", 335,676 };
+    Building b13 = { 13, "健身房", "健身房", 288,679 };
+    Building b14 = { 14, "综合类球馆", "羽毛球、乒乓球、篮球", 366,171 };
+    Building b15 = { 15, "拓展训练场", "拓展运动", 461,151 };
+    Building b16 = { 16, "九人足球场", "九人足球场", 398,191 };
+    Building b17 = { 17, "赛车训练场", "赛车训练场", 397,243 };
+    Building b18 = { 18, "探海楼", "海洋学院", 182,78 };
+    Building b19 = { 19, "大学生活动中心", "乐室、舞蹈室", 250,172 };
+    Building b20 = { 20, "学子餐厅", "食堂（共4层）", 241,290 };
+    Building b21 = { 21, "学苑餐厅", "食堂（共2层）", 328,387 };
+    Building b22 = { 22, "1公寓", "学生寝室", 336,429 };
+    Building b23 = { 23, "2公寓", "学生寝室", 265,437 };
+    Building b24 = { 24, "3公寓", "学生寝室", 265,403 };
+    Building b25 = { 25, "4公寓", "学生寝室", 262,375 };
+    Building b26 = { 26, "5公寓", "学生寝室", 338,468 };
+    Building b27 = { 27, "6公寓", "学生寝室", 260,335 };
+    Building b28 = { 28, "7公寓", "学生寝室", 179,434 };
+    Building b29 = { 29, "8公寓", "学生寝室", 203,352 };
+    Building b30 = { 30, "9公寓", "学生寝室", 203,310 };
+    Building b31 = { 31, "10公寓", "学生寝室", 156,309 };
+    Building b32 = { 32, "11公寓", "学生寝室", 111,309 };
+    Building b33 = { 33, "12公寓", "学生寝室", 466,289 };
+    Building b34 = { 34, "13公寓", "学生寝室", 532,286 };
+    Building b35 = { 35, "14公寓", "学生寝室", 542,209 };
+    Building b36 = { 36, "南门", "学校正门", 413,814 };
+    Building b37 = { 37, "西北门", "西北门", 96,185 };
+    Building b38 = { 38, "东门", "东门", 576,570 };
+    Building b39 = { 39, "创新产业园", "校友企业", 51,307 };
+    Building b40 = { 40, "校史馆", "威海校区历史", 385,445 };
+    Building b41 = { 41, "大学生服务中心", "澡堂、饭店、打印室、洗衣室", 262,488 };
+    Building b42 = { 42, "天雅苑", "酒店", 465,238 };
+    Building b43 = { 43, "留学生公寓", "留学生公寓", 465,202 };
+    Building b44 = { 44, "快递站", "快递站", 314,294 };
+    Building b45 = { 45, "test", "test", 56,456 };
+
+
+    // 保存到全局数组
+    buildings[0] = b0;
+    buildings[1] = b1;
+    buildings[2] = b2;
+    buildings[3] = b3;
+    buildings[4] = b4;
+    buildings[5] = b5;
+    buildings[6] = b6;
+    buildings[7] = b7;
+    buildings[8] = b8;
+    buildings[9] = b9;
+    buildings[10] = b10;
+    buildings[11] = b11;
+    buildings[12] = b12;
+    buildings[13] = b13;
+    buildings[14] = b14;
+    buildings[15] = b15;
+    buildings[16] = b16;
+    buildings[17] = b17;
+    buildings[18] = b18;
+    buildings[19] = b19;
+    buildings[20] = b20;
+    buildings[21] = b21;
+    buildings[22] = b22;
+    buildings[23] = b23;
+    buildings[24] = b24;
+    buildings[25] = b25;
+    buildings[26] = b26;
+    buildings[27] = b27;
+    buildings[28] = b28;
+    buildings[29] = b29;
+    buildings[30] = b30;
+    buildings[31] = b31;
+    buildings[32] = b32;
+    buildings[33] = b33;
+    buildings[34] = b34;
+    buildings[35] = b35;
+    buildings[36] = b36;
+    buildings[37] = b37;
+    buildings[38] = b38;
+    buildings[39] = b39;
+    buildings[40] = b40;
+    buildings[41] = b41;
+    buildings[42] = b42;
+    buildings[43] = b43;
+    buildings[44] = b44;
+    buildings[45] = b45;
+
+    // 最后一个有效建筑后标记结束（非必须，但保持一致性）
+    // 实际上，我们已经初始化了所有位置为-1，所以不需要额外设置
+}
+
+/**
+ * 创建默认边数据
+ */
+void createDefaultEdges(Graph** graph) {
+    // 预定义边数组
+    int edges[][2] = {
+        {0, 7}, {0, 38}, {0, 6}, {0, 40},   // 主楼(0) -> 研究院(7), 东门(38), 安学楼(6), 校史馆(40)
+        {1, 18}, {1, 19},                    // 图书馆(1) -> 探海楼(18), 大学生活动中心(19)
+        {2, 19}, {2, 37},                    // 宁学楼(2) -> 大学生活动中心(19), 西北门(37)
+        {3, 4}, {3, 8}, {3, 41},             // 明学楼(3) -> 功学楼(4), 田径场(8), 大学生服务中心(41)
+        {4, 5}, {4, 10},                     // 功学楼(4) -> 博学楼(5), 轮滑场(10)
+        {5, 26},                              // 博学楼(5) -> 5公寓(26)
+        {6, 7}, {6, 40}, {6, 33},            // 安学楼(6) -> 研究院(7), 校史馆(40), 12公寓(33)
+        {7, 36},                              // 研究院(7) -> 南门(36)
+        {8, 9}, {8, 10}, {8, 3},             // 田径场(8) -> 篮球场(9), 轮滑场(10), 明学楼(3)
+        {10, 11},                             // 轮滑场(10) -> 排球场(11)
+        {11, 12},                             // 排球场(11) -> 网球场(12)
+        {12, 13},                             // 网球场(12) -> 健身房(13)
+        {14, 15}, {14, 16}, {14, 19},        // 综合类球馆(14) -> 拓展训练场(15), 九人足球场(16), 大学生活动中心(19)
+        {15, 16}, {15, 43},                  // 拓展训练场(15) -> 九人足球场(16), 留学生公寓(43)
+        {16, 17},                             // 九人足球场(16) -> 赛车训练场(17)
+        {17, 33}, {17, 44},                  // 赛车训练场(17) -> 12公寓(33), 快递站(44)
+        {18, 1},                              // 探海楼(18) -> 图书馆(1)
+        {19, 20}, {19, 2},                   // 大学生活动中心(19) -> 学子餐厅(20), 宁学楼(2)
+        {20, 27}, {20, 30}, {20, 44},        // 学子餐厅(20) -> 6公寓(27), 9公寓(30), 快递站(44)
+        {21, 22}, {21, 25},                  // 学苑餐厅(21) -> 1公寓(22), 4公寓(25)
+        {22, 26}, {22, 40},                  // 1公寓(22) -> 5公寓(26), 校史馆(40)
+        {23, 24}, {23, 41},                  // 2公寓(23) -> 3公寓(24), 大学生服务中心(41)
+        {24, 25},                             // 3公寓(24) -> 4公寓(25)
+        {25, 27},                             // 4公寓(25) -> 6公寓(27)
+        {26, 22}, {26, 41},                  // 5公寓(26) -> 1公寓(22), 大学生服务中心(41)
+        {27, 20}, {27, 25}, {27, 44},        // 6公寓(27) -> 学子餐厅(20), 4公寓(25), 快递站(44)
+        {28, 24}, {28, 29},                  // 7公寓(28) -> 3公寓(24), 8公寓(29)
+        {29, 30},                             // 8公寓(29) -> 9公寓(30)
+        {30, 31}, {30, 29},                  // 9公寓(30) -> 10公寓(31), 8公寓(29)
+        {31, 32},                             // 10公寓(31) -> 11公寓(32)
+        {32, 37}, {32, 39},                  // 11公寓(32) -> 西北门(37), 创新产业园(39)
+        {33, 34}, {33, 35}, {33, 42}, {33, 17}, // 12公寓(33) -> 13公寓(34), 14公寓(35), 天雅苑(42), 赛车训练场(17)
+        {34, 35},                             // 13公寓(34) -> 14公寓(35)
+        {35, 34},                             // 14公寓(35) -> 13公寓(34)
+        {36, 7},                              // 南门(36) -> 研究院(7)
+        {37, 32}, {37, 39},                  // 西北门(37) -> 11公寓(32), 创新产业园(39)
+        {38, 0},                              // 东门(38) -> 主楼(0)
+        {39, 32}, {39, 37},                  // 创新产业园(39) -> 11公寓(32), 西北门(37)
+        {40, 6}, {40, 33}, {40, 22}, {40, 0}, // 校史馆(40) -> 安学楼(6), 12公寓(33), 1公寓(22), 主楼(0)
+        {41, 23}, {41, 26}, {41, 3},         // 大学生服务中心(41) -> 2公寓(23), 5公寓(26), 明学楼(3)
+        {42, 33}, {42, 43},                  // 天雅苑(42) -> 12公寓(33), 留学生公寓(43)
+        {43, 15}, {43, 42},                  // 留学生公寓(43) -> 拓展训练场(15), 天雅苑(42)
+        {44, 27}, {44, 20}, {44, 17}         // 快递站(44) -> 6公寓(27), 学子餐厅(20), 赛车训练场(17)
+        
+    };
+    int num_edges = sizeof(edges) / sizeof(edges[0]);
+
+    // 创建图，预分配num_edges条边
+    *graph = createGraph(MAX_BUILDINGS, num_edges);
+    if (!*graph) {
+        return;
+    }
+
+    int actual_edge_count = 0; // 实际添加的边数
+
+    for (int i = 0; i < num_edges; i++) {
+        int src = edges[i][0];
+        int dest = edges[i][1];
+        Building* b1 = hashSearch(building_table, src);
+        Building* b2 = hashSearch(building_table, dest);
+
+        // 如果两个建筑都存在且有效
+        if (b1 && b2 && b1->id != -1 && b2->id != -1) {
+            // 计算权重
+            int dx = b1->x - b2->x;
+            int dy = b1->y - b2->y;
+            int weight = (int)sqrt(dx * dx + dy * dy);
+            // 添加边（使用actual_edge_count作为当前边的索引）
+            addEdge(*graph, src, dest, weight, actual_edge_count);
+            actual_edge_count++;
+        }
+    }
+
+    // 更新图的边数量为实际添加的边数
+    (*graph)->E = actual_edge_count;
+}
+
+ /**
+  * 创建图结构
+  * @param V 顶点数量
+  * @param E 边数量
+  * @return 创建的图指针，失败返回NULL
+  */
+Graph* createGraph(int V, int E) {
+    Graph* graph = (Graph*)malloc(sizeof(Graph));
+    if (!graph) return NULL;
+
+    graph->V = V;
+    graph->E = E;  // 初始化边数量
+    graph->array = (AdjListHead*)malloc(V * sizeof(AdjListHead));
+    graph->edges = (Edge*)malloc(E * sizeof(Edge));  // 分配边数组内存
+
+    if (!graph->array || !graph->edges) {
+        if (graph->array) free(graph->array);
+        if (graph->edges) free(graph->edges);
+        free(graph);
+        return NULL;
+    }
+
+    // 初始化每个顶点的邻接表
+    for (int i = 0; i < V; ++i) {
+        graph->array[i].building_id = i;
+        graph->array[i].head = NULL;
+    }
+
+    return graph;
+}
+
+/**
+ * 向图中添加边（路径）
+ * @param graph 图指针
+ * @param src 源顶点ID
+ * @param dest 目标顶点ID
+ * @param weight 路径权重（距离）
+ */
+void addEdge(Graph* graph, int src, int dest, int weight, int edge_index) {
+    // 保存边信息
+    if (edge_index < graph->E) {
+        graph->edges[edge_index].src = src;
+        graph->edges[edge_index].dest = dest;
+    }
+
+    // 创建源顶点到目标顶点的边
+    AdjListNode* newNode = (AdjListNode*)malloc(sizeof(AdjListNode));
+    if (!newNode) return;
+
+    newNode->dest = dest;
+    newNode->weight = weight;
+    newNode->next = graph->array[src].head;
+    graph->array[src].head = newNode;
+
+    // 无向图：创建目标顶点到源顶点的边
+    newNode = (AdjListNode*)malloc(sizeof(AdjListNode));
+    if (!newNode) return;
+
+    newNode->dest = src;
+    newNode->weight = weight;
+    newNode->next = graph->array[dest].head;
+    graph->array[dest].head = newNode;
+}
+
+/**
+ * 更新边的权重
+ * @param graph 图指针
+ * @param building_id 更新的建筑ID
+ */
+void updateEdgeWeight(Graph* graph, int building_id) {
+    // 遍历所有边
+    for (int i = 0; i < graph->E; i++) {
+        Edge e = graph->edges[i];
+
+        // 如果边包含该建筑
+        if (e.src == building_id || e.dest == building_id) {
+            Building* b1 = hashSearch(building_table, e.src);
+            Building* b2 = hashSearch(building_table, e.dest);
+
+            if (b1 && b2) {
+                // 计算欧几里得距离
+                int dx = b1->x - b2->x;
+                int dy = b1->y - b2->y;
+                int weight = (int)sqrt(dx * dx + dy * dy);
+
+                // 更新源到目标的边
+                AdjListNode* node = graph->array[e.src].head;
+                while (node) {
+                    if (node->dest == e.dest) {
+                        node->weight = weight;
+                        break;
+                    }
+                    node = node->next;
+                }
+
+                // 更新目标到源的边（无向图）
+                node = graph->array[e.dest].head;
+                while (node) {
+                    if (node->dest == e.src) {
+                        node->weight = weight;
+                        break;
+                    }
+                    node = node->next;
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 加载边数据
+ */
+void loadEdgeData(Graph** graph) {
+    TCHAR szPath[MAX_PATH];
+    GetCurrentDirectory(MAX_PATH, szPath);
+    TCHAR fullPath[MAX_PATH];
+    _stprintf_s(fullPath, MAX_PATH, _T("%s\\%s"), szPath, EDGE_FILENAME);
+
+    if (!PathFileExists(fullPath)) {
+        // 文件不存在，创建默认边
+        createDefaultEdges(graph);
+        // 立即保存到文件，实现和节点一致的持久化逻辑
+        if (*graph) {
+            saveEdgeData(*graph);
+        }
+        return;
+    }
+
+    FILE* file = NULL;
+    if (_tfopen_s(&file, fullPath, _T("r")) != 0 || file == NULL) {
+        // 文件打开失败，创建默认边
+        createDefaultEdges(graph);
+        // 立即保存到文件，实现和节点一致的持久化逻辑
+        if (*graph) {
+            saveEdgeData(*graph);
+        }
+        return;
+    }
+
+    // 统计边数量
+    int edge_count = 0;
+    int src, dest;
+    while (fscanf_s(file, "%d,%d\n", &src, &dest) == 2) {
+        edge_count++;
+    }
+    rewind(file);
+
+    // 创建图结构
+    *graph = createGraph(MAX_BUILDINGS, edge_count);
+    if (!*graph) {
+        fclose(file);
+        return;
+    }
+
+    // 加载边数据
+    int index = 0;
+    while (fscanf_s(file, "%d,%d\n", &src, &dest) == 2 && index < edge_count) {
+        Building* b1 = hashSearch(building_table, src);
+        Building* b2 = hashSearch(building_table, dest);
+
+        // 添加NULL检查
+        if (!b1 || !b2 || b1->id == -1 || b2->id == -1) {
+            continue;  // 跳过无效建筑
+        }
+
+        // 计算权重（欧几里得距离）
+        int dx = b1->x - b2->x;
+        int dy = b1->y - b2->y;
+        int weight = (int)sqrt(dx * dx + dy * dy);
+
+        addEdge(*graph, src, dest, weight, index);
+        index++;
+    }
+
+    fclose(file);
+}
+
+
+/**
+ * 创建哈希表
+ * @param size 哈希表大小
+ * @return 创建的哈希表指针，失败返回NULL
+ * 分配桶数组并初始化
+ */
+HashTable* createHashTable(int size) {
+    // 1. 分配哈希表结构内存
+    HashTable* hashtable = (HashTable*)malloc(sizeof(HashTable));
+    if (!hashtable) return NULL;
+
+    // 2. 设置哈希表大小
+    hashtable->size = size;
+
+    // 3. 分配桶数组内存
+    hashtable->table = (HashNode**)malloc(sizeof(HashNode*) * size);
+    if (!hashtable->table) {
+        free(hashtable);
+        return NULL;
+    }
+
+    // 4. 初始化所有桶为空
+    for (int i = 0; i < size; i++) {
+        hashtable->table[i] = NULL;
+    }
+
+    return hashtable;
+}
+
+/**
+ * 哈希函数
+ * @param key 建筑ID
+ * @return 哈希值
+ */
+int hash(int key) {
+    return key % HASH_SIZE;
+}
+
+/**
+ * 向哈希表插入建筑数据
+ * @param hashtable 哈希表指针
+ * @param building 建筑数据
+ */
+void hashInsert(HashTable* hashtable, Building building) {
+    // 1. 计算哈希值
+    int index = hash(building.id);
+
+    // 2. 创建新节点
+    HashNode* new_node = (HashNode*)malloc(sizeof(HashNode));
+    if (!new_node) return;
+
+    // 3. 填充节点数据
+    new_node->key = building.id;
+    new_node->building = building;
+
+    // 4. 头插法插入链表
+    new_node->next = hashtable->table[index];
+    hashtable->table[index] = new_node;
+}
+
+/**
+ * 在哈希表中查找建筑
+ * @param hashtable 哈希表指针
+ * @param key 建筑ID
+ * @return 找到的建筑指针，未找到返回NULL
+ */
+Building* hashSearch(HashTable* hashtable, int key) {
+    // 1. 计算哈希值
+    int index = hash(key);
+
+    // 2. 获取桶链表头
+    HashNode* node = hashtable->table[index];
+
+    // 3. 遍历链表查找
+    while (node != NULL && node->key != key) {
+        node = node->next;
+    }
+
+    // 4. 返回结果
+    if (node == NULL)
+        return NULL;
+    return &(node->building);
+}
+
+/**
+哈希表主要用于快速查找和更新与节点相关的状态信息（距离、前驱），而不是存储最终的路径本身。路径是通过前驱指针链回溯得到的。
+*/
+
+/**
+ * Dijkstra最短路径算法
+ * @param graph 图结构指针
+ * @param src 起点ID
+ * @param dist 距离数组（输出）
+ * @param prev 前驱节点数组（输出）
+ */
+void dijkstra(Graph* graph, int src, int* dist, int* prev) {
+    if (!graph) return;  // 添加图有效性检查
+
+    int V = graph->V;  // 获取实际顶点数
+    int* visited = (int*)malloc(V * sizeof(int));
+    if (!visited) return;
+
+    // 初始化距离和前驱数组
+    for (int i = 0; i < V; i++) {
+        dist[i] = INT_MAX;   // 初始距离设为无穷大
+        visited[i] = 0;      // 未访问标记
+        prev[i] = -1;        // 无前驱
+    }
+    dist[src] = 0;          // 起点距离为0
+
+    // 遍历所有顶点
+    for (int count = 0; count < V - 1; count++) {
+        // 选取当前最小距离顶点
+        int min = INT_MAX, u = -1;
+        for (int v = 0; v < V; v++) {
+            if (!visited[v] && dist[v] <= min) {
+                min = dist[v];
+                u = v;
+            }
+        }
+
+        if (u == -1 || min == INT_MAX) break; // 没有可达节点
+        visited[u] = 1;     // 标记为已访问
+
+        // 更新邻接顶点距离
+        AdjListNode* node = graph->array[u].head;
+        while (node != NULL) {
+            int v = node->dest;
+            // 确保v在有效范围内
+            if (v >= 0 && v < V) {
+                // 如果找到更短路径
+                if (!visited[v] && dist[u] != INT_MAX &&
+                    dist[u] + node->weight < dist[v]) {
+                    dist[v] = dist[u] + node->weight;
+                    prev[v] = u;  // 更新前驱节点
+                }
+            }
+            node = node->next;
+        }
+    }
+    free(visited);
+}
+
+/**
+ * 根据前驱数组获取最短路径
+ * @param prev 前驱节点数组
+ * @param dest 终点ID
+ * @param path_size 路径长度（输出）
+ * @return 最短路径数组指针，调用者需释放内存
+ */
+int* getShortestPath(int* prev, int dest, int* path_size) {
+    if (!prev) return NULL;
+
+    int* temp_path = (int*)malloc(MAX_BUILDINGS * sizeof(int));
+    if (!temp_path) return NULL;
+
+    int count = 0;
+    int current = dest;
+
+    // 反向追踪路径
+    while (current != -1 && count < MAX_BUILDINGS) {
+        temp_path[count++] = current;
+        current = prev[current];
+    }
+
+    // 分配结果数组内存
+    int* result = (int*)malloc(count * sizeof(int));
+    if (!result) {
+        free(temp_path);
+        return NULL;
+    }
+
+    // 反转路径为正向
+    for (int i = 0; i < count; i++) {
+        result[i] = temp_path[count - 1 - i];
+    }
+
+    *path_size = count;
+    free(temp_path);
+    return result;
+}
+
+/**
+ * 加载校园地图背景
+ * 支持BMP和JPG格式（优先BMP）
+ */
+void loadCampusMap() {
+    TCHAR szPath[MAX_PATH];
+    GetCurrentDirectory(MAX_PATH, szPath);  // 获取当前工作目录
+
+    // 构建地图文件路径
+    TCHAR fullPath[MAX_PATH];
+    _stprintf_s(fullPath, MAX_PATH, _T(".\\res\\campus_map.bmp")); // 首选BMP格式
+
+    // 检查文件是否存在
+    if (!PathFileExists(fullPath)) {
+        // 尝试JPG格式
+        _stprintf_s(fullPath, MAX_PATH, _T(".\\res\\campus_map.jpg"), szPath);
+        if (!PathFileExists(fullPath)) {
+            TCHAR szError[512];
+            _stprintf_s(szError, 512,
+                _T("地图文件不存在!\n路径: %s\n请检查文件是否存在且路径正确"),
+                fullPath);
+            MessageBox(hwnd, szError, _T("错误"), MB_ICONERROR);
+            exit(1);
+        }
+    }
+
+    // 加载位图文件
+    campus_map = (HBITMAP)LoadImage(
+        NULL,                   // 不指定实例
+        fullPath,               // 文件路径
+        IMAGE_BITMAP,           // 位图类型
+        0, 0,                   // 不指定宽高
+        LR_LOADFROMFILE | LR_CREATEDIBSECTION | LR_DEFAULTSIZE // 加载选项
+    );
+
+    if (!campus_map) {
+        DWORD dwError = GetLastError();
+        TCHAR szError[512];
+        _stprintf_s(szError, 512,
+            _T("无法加载地图! 错误代码: %d\n文件路径: %s\n提示: 尝试将图片转换为24位BMP格式"),
+            dwError, fullPath);
+        MessageBox(hwnd, szError, _T("错误"), MB_ICONERROR);
+        exit(1);
+    }
+}
+
+/**
+ * 保存建筑数据到文件
+ */
+void saveBuildingData() {
+    TCHAR szPath[MAX_PATH];
+    GetCurrentDirectory(MAX_PATH, szPath);
+    TCHAR fullPath[MAX_PATH];
+    _stprintf_s(fullPath, MAX_PATH, _T("%s\\%s"), szPath, DATA_FILENAME);
+
+    FILE* file = NULL;
+    if (_tfopen_s(&file, fullPath, _T("w")) != 0 || file == NULL) {
+        TCHAR szError[512];
+        _stprintf_s(szError, 512, _T("无法保存建筑数据! 文件路径: %s"), fullPath);
+        MessageBox(hwnd, szError, _T("错误"), MB_ICONERROR);
+        return;
+    }
+
+    // 写入标题行
+    fprintf(file, "id,name,description,x,y\n");
+
+    for (int i = 0; i < MAX_BUILDINGS; i++) {
+        if (buildings[i].id == -1) continue;
+
+        // 转义描述中的逗号（替换为分号）
+        char escaped_desc[100];
+        strcpy_s(escaped_desc, buildings[i].description);
+        for (char* p = escaped_desc; *p; p++) {
+            if (*p == ',') *p = ';';
+        }
+
+        // 写入CSV格式数据（使用窄字符）
+        fprintf(file, "%d,%s,%s,%d,%d\n",
+            buildings[i].id,
+            buildings[i].name,
+            escaped_desc,
+            buildings[i].x,
+            buildings[i].y);
+    }
+
+    fclose(file);
+}
+
+/**
+ * 从文件加载建筑数据
+ */
+void loadBuildingData() {
+    // 初始化为无效数据
+    for (int i = 0; i < MAX_BUILDINGS; i++) {
+        buildings[i].id = -1;
+    }
+
+    TCHAR szPath[MAX_PATH];
+    GetCurrentDirectory(MAX_PATH, szPath);
+    TCHAR fullPath[MAX_PATH];
+    _stprintf_s(fullPath, MAX_PATH, _T("%s\\%s"), szPath, DATA_FILENAME);
+
+    if (!PathFileExists(fullPath)) {
+        return; // 文件不存在
+    }
+
+    FILE* file = NULL;
+    if (_tfopen_s(&file, fullPath, _T("r")) != 0 || file == NULL) {
+        return;
+    }
+
+    // 跳过标题行
+    TCHAR header[256];
+    _fgetts(header, 256, file);
+
+    int index = 0;
+    while (!feof(file) && index < MAX_BUILDINGS) {
+        int id, x, y;
+        char name[50] = { 0 };  // 初始化为0
+        char desc[100] = { 0 }; // 初始化为0
+
+        // 使用 fscanf 读取窄字符
+        if (fscanf_s(file, "%d,%49[^,],%99[^,],%d,%d\n",
+            &id, name, (unsigned)_countof(name),
+            desc, (unsigned)_countof(desc), &x, &y) == 5) {
+            buildings[index].id = id;
+
+            // 确保字符串以null结尾
+            name[49] = '\0';
+            desc[99] = '\0';
+
+            // 使用 strcpy_s 复制窄字符串
+            strcpy_s(buildings[index].name, sizeof(buildings[index].name), name);
+
+            // 还原描述中的特殊字符
+            for (char* p = desc; *p; p++) {
+                if (*p == ';') *p = ',';
+            }
+            strcpy_s(buildings[index].description, sizeof(buildings[index].description), desc);
+
+            buildings[index].x = x;
+            buildings[index].y = y;
+            index++;
+        }
+    }
+
+    fclose(file);
+}
+
+/**
+ * 初始化校园数据
+ * 包括建筑信息、路径图和哈希表
+ */
+void initializeCampusData() {
+    // 尝试从文件加载建筑数据
+    loadBuildingData();
+
+    // 检查是否有有效建筑数据
+    bool hasValidData = false;
+    for (int i = 0; i < MAX_BUILDINGS; i++) {
+        if (buildings[i].id != -1) {
+            hasValidData = true;
+            break;
+        }
+    }
+
+    // 如果没有有效数据，创建默认数据
+    if (!hasValidData) {
+        createDefaultBuildings();
+        saveBuildingData();  // 保存为TXT格式
+    }
+
+    // 初始化哈希表
+    building_table = createHashTable(HASH_SIZE);
+    if (!building_table) {
+        MessageBox(hwnd, L"哈希表初始化失败!", L"错误", MB_ICONERROR);
+        return;
+    }
+
+    // 将建筑添加到哈希表
+    for (int i = 0; i < MAX_BUILDINGS; i++) {
+        if (buildings[i].id != -1) {
+            hashInsert(building_table, buildings[i]);
+        }
+    }
+
+    // 加载边数据（会创建图结构）
+    loadEdgeData(&campus_graph);
+
+    // 加载校园地图
+    loadCampusMap();
+}
+
+void saveEdgeData(Graph* graph) {
+    TCHAR szPath[MAX_PATH];
+    GetCurrentDirectory(MAX_PATH, szPath);
+    TCHAR fullPath[MAX_PATH];
+    _stprintf_s(fullPath, MAX_PATH, _T("%s\\%s"), szPath, EDGE_FILENAME);
+
+    FILE* file = NULL;
+    if (_tfopen_s(&file, fullPath, _T("w")) != 0 || file == NULL) {
+        return;
+    }
+
+    // 保存所有边
+    for (int i = 0; i < graph->E; i++) {
+        fprintf(file, "%d,%d\n", graph->edges[i].src, graph->edges[i].dest);
+    }
+
+    fclose(file);
+}
+
+/**
+ * ANSI转宽字符辅助函数
+ * @param pszText ANSI字符串
+ * @return 宽字符串指针
+ */
+static const wchar_t* CA2W(const char* pszText) {
+    static wchar_t wszBuffer[512];
+    if (pszText) {
+        MultiByteToWideChar(CP_ACP, 0, pszText, -1, wszBuffer, _countof(wszBuffer));
+    }
+    else {
+        wszBuffer[0] = L'\0';
+    }
+    return wszBuffer;
+}
+
+/**
+ * 绘制校园地图
+ * @param hdc 设备上下文句柄
+ */
+void drawCampusMap(HDC hdc) {
+    // 绘制背景地图
+    if (campus_map) {
+        HDC hdcMem = CreateCompatibleDC(hdc);
+        if (hdcMem) {
+            HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, campus_map);
+            BITMAP bm;
+            GetObject(campus_map, sizeof(bm), &bm);
+
+            // 计算缩放比例和位置（保持宽高比）
+            double scaleX = (double)WINDOW_WIDTH / bm.bmWidth;
+            double scaleY = (double)WINDOW_HEIGHT / bm.bmHeight;
+            double scale = scaleX < scaleY ? scaleX : scaleY; // 取较小比例，保证完整显示
+
+            int scaledWidth = (int)(bm.bmWidth * scale);
+            int scaledHeight = (int)(bm.bmHeight * scale);
+
+            // 计算居中位置
+            int offsetX = (WINDOW_WIDTH - scaledWidth) / 2;
+            int offsetY = (WINDOW_HEIGHT - scaledHeight) / 2;
+
+            // 使用缩放绘制
+            SetStretchBltMode(hdc, HALFTONE); // 高质量缩放
+            StretchBlt(hdc,
+                offsetX, offsetY, scaledWidth, scaledHeight,
+                hdcMem,
+                0, 0, bm.bmWidth, bm.bmHeight,
+                SRCCOPY);
+
+            SelectObject(hdcMem, hOldBitmap);
+            DeleteDC(hdcMem);
+        }
+    }
+    else {
+        // 如果地图加载失败，使用纯色背景
+        HBRUSH hBrush = CreateSolidBrush(RGB(135, 206, 235)); // 天蓝色
+        RECT rect = { 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT };
+        FillRect(hdc, &rect, hBrush);
+        DeleteObject(hBrush);
+    }
+
+    // === 绘制所有路径（灰色）===
+    if (campus_graph) {
+        // 创建灰色画笔
+        HPEN grayPen = CreatePen(PS_SOLID, 2, RGB(180, 180, 180)); // 灰色路径
+        if (grayPen) {
+            HGDIOBJ hOldPen = SelectObject(hdc, grayPen);
+
+            // 标记已绘制边的数组
+            int drawn[MAX_BUILDINGS][MAX_BUILDINGS] = { 0 };
+
+            for (int u = 0; u < campus_graph->V; u++) {
+                AdjListNode* node = campus_graph->array[u].head;
+                while (node != NULL) {
+                    int v = node->dest;
+
+                    // 确保只绘制一次无向边
+                    if (u < v && !drawn[u][v]) {
+                        Building* b1 = hashSearch(building_table, u);
+                        Building* b2 = hashSearch(building_table, v);
+
+                        if (b1 && b2 && b1->id != -1 && b2->id != -1) {
+                            // 绘制灰色路径线段
+                            MoveToEx(hdc, b1->x, b1->y, NULL);
+                            LineTo(hdc, b2->x, b2->y);
+
+                            // 标记该边已绘制
+                            drawn[u][v] = drawn[v][u] = 1;
+                        }
+                    }
+                    node = node->next;
+                }
+            }
+
+            SelectObject(hdc, hOldPen);
+            DeleteObject(grayPen);
+        }
+    }
+
+    // 绘制所有建筑标记
+    HBRUSH buildingBrush = CreateSolidBrush(RGB(173, 216, 230)); // 浅蓝色
+    HPEN buildingPen = CreatePen(PS_SOLID, 1, RGB(0, 0, 255));  // 蓝色边框
+    if (buildingBrush && buildingPen) {
+        HGDIOBJ hOldBrush = SelectObject(hdc, buildingBrush);
+        HGDIOBJ hOldPen = SelectObject(hdc, buildingPen);
+
+        for (int i = 0; i < MAX_BUILDINGS; i++) {
+            // 跳过无效建筑
+            if (buildings[i].id == -1) continue;
+
+            // 编辑模式下选中的建筑用黄色标记
+            if (is_edit_mode && selected_building_id == i) {
+                HBRUSH selectedBrush = CreateSolidBrush(RGB(255, 255, 0)); // 黄色
+                SelectObject(hdc, selectedBrush);
+                Ellipse(hdc, buildings[i].x - 20, buildings[i].y - 20,
+                    buildings[i].x + 20, buildings[i].y + 20);
+                DeleteObject(selectedBrush);
+                SelectObject(hdc, buildingBrush);
+            }
+            else {
+                // 绘制建筑圆形标记
+                Ellipse(hdc, buildings[i].x - 10, buildings[i].y - 10,
+                    buildings[i].x + 10, buildings[i].y + 10);
+            }
+
+            // 显示建筑名称
+            SetBkMode(hdc, OPAQUE); // 不透明背景
+            SetBkColor(hdc, RGB(255, 255, 255)); // 白色背景
+            HFONT hNameFont = CreateFont(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                OUT_OUTLINE_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                VARIABLE_PITCH, TEXT("微软雅黑"));
+            if (hNameFont) {
+                HFONT hOldFont = (HFONT)SelectObject(hdc, hNameFont);
+                // 输出建筑名称
+                wchar_t wname[50];
+                MultiByteToWideChar(CP_ACP, 0, buildings[i].name, -1, wname, 50);
+                TextOut(hdc, buildings[i].x - 30, buildings[i].y + 20, wname, (int)wcslen(wname));
+                SelectObject(hdc, hOldFont);
+                DeleteObject(hNameFont);
+            }
+        }
+
+        // 恢复并删除GDI对象
+        SelectObject(hdc, hOldBrush);
+        SelectObject(hdc, hOldPen);
+        DeleteObject(buildingBrush);
+        DeleteObject(buildingPen);
+    }
+
+    // 绘制功能说明
+    SetBkMode(hdc, OPAQUE);
+    SetBkColor(hdc, RGB(240, 240, 240)); // 浅灰色背景
+    HFONT hInfoFont = CreateFont(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_OUTLINE_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        VARIABLE_PITCH, TEXT("微软雅黑"));
+    if (hInfoFont) {
+        HFONT hOldFont = (HFONT)SelectObject(hdc, hInfoFont);
+        TextOut(hdc, 20, WINDOW_HEIGHT - 60, TEXT("校园导航操作说明:"), (int)_tcslen(TEXT("校园导航操作说明:")));
+        TextOut(hdc, 20, WINDOW_HEIGHT - 40, TEXT("1. 左键选择起点，右键选择终点"),
+            (int)_tcslen(TEXT("1. 左键选择起点，右键选择终点")));
+        TextOut(hdc, 20, WINDOW_HEIGHT - 20, TEXT("2. 按空格键清除路径，按ESC退出"),
+            (int)_tcslen(TEXT("2. 按空格键清除路径，按ESC退出")));
+        SelectObject(hdc, hOldFont);
+        DeleteObject(hInfoFont);
+    }
+
+    // 绘制侧边栏
+    HBRUSH sidebarBrush = CreateSolidBrush(RGB(240, 240, 240)); // 浅灰色
+    if (sidebarBrush) {
+        RECT sidebarRect = { 900, 0, WINDOW_WIDTH, WINDOW_HEIGHT };
+        FillRect(hdc, &sidebarRect, sidebarBrush);
+        DeleteObject(sidebarBrush);
+    }
+
+
+    // 绘制标题
+    SetBkMode(hdc, TRANSPARENT);
+    HFONT hSideFont = CreateFont(35, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_OUTLINE_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        VARIABLE_PITCH, TEXT("微软雅黑"));
+    if (hSideFont) {
+        HFONT hOldFont = (HFONT)SelectObject(hdc, hSideFont);
+        SetTextColor(hdc, RGB(0, 0, 0)); // 黑色文字
+        TextOut(hdc, 25, 750, TEXT("哈工大（威海）校园导览"), (int)_tcslen(TEXT("哈工大（威海）校园导览")));
+        SelectObject(hdc, hOldFont);
+        DeleteObject(hSideFont);
+    }
+
+    // 绘制功能按钮
+    HFONT hButtonFont = CreateFont(30, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_OUTLINE_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        VARIABLE_PITCH, TEXT("微软雅黑"));
+    if (hButtonFont) {
+        HFONT hOldFont = (HFONT)SelectObject(hdc, hButtonFont);
+        SetTextColor(hdc, RGB(0, 0, 0)); // 黑色文字
+
+        // 绘制按钮背景
+        HBRUSH buttonBrush = CreateSolidBrush(RGB(200, 200, 255)); // 浅蓝色
+        for (int i = 0; i < 2; i++) {
+            RECT btnRect = { 190, 800 + i * 30, 300, 850 + i * 30 };
+            FillRect(hdc, &btnRect, buttonBrush);
+        }
+        DeleteObject(buttonBrush);
+
+        // 绘制按钮文字
+        TextOut(hdc, 200, 800, TEXT("编辑模式"), (int)_tcslen(TEXT("编辑模式")));
+        TextOut(hdc, 200, 850, TEXT("退出系统"), (int)_tcslen(TEXT("退出系统")));
+
+        SelectObject(hdc, hOldFont);
+        DeleteObject(hButtonFont);
+    }
+}
+
+
+ /**
+  * 绘制最短路径（带箭头和特殊标记）
+  */
+void drawPath(HDC hdc, int* path, int path_size) {
+    if (path_size < 2 || !path) return;
+
+    // 1. 创建路径画笔和箭头画刷
+    HPEN pathPen = CreatePen(PS_SOLID, 4, RGB(255, 0, 0)); // 红色实线
+    HBRUSH arrowBrush = CreateSolidBrush(RGB(255, 0, 0));   // 红色填充
+    if (!pathPen || !arrowBrush) return;
+
+    // 2. 应用绘图工具
+    HGDIOBJ hOldPen = SelectObject(hdc, pathPen);
+    HGDIOBJ hOldBrush = SelectObject(hdc, arrowBrush);
+
+    // 3. 绘制路径线段和箭头
+    for (int i = 0; i < path_size - 1; i++) {
+        Building* b1 = hashSearch(building_table, path[i]);
+        Building* b2 = hashSearch(building_table, path[i + 1]);
+        if (!b1 || !b2) continue;
+
+        // 绘制连接线
+        MoveToEx(hdc, b1->x, b1->y, NULL);
+        LineTo(hdc, b2->x, b2->y);
+
+        // 计算箭头参数
+        double dx = b2->x - b1->x;
+        double dy = b2->y - b1->y;
+        double length = sqrt(dx * dx + dy * dy);
+
+        if (length > 0) {
+            // 箭头位置（路径中点）
+            int mid_x = (b1->x + b2->x) / 2;
+            int mid_y = (b1->y + b2->y) / 2;
+
+            // 单位方向向量
+            double ux = dx / length;
+            double uy = dy / length;
+
+            // 箭头参数
+            const int arrow_size = 10;
+            const int arrow_length = 15;
+
+            // 箭头顶点
+            int tip_x = mid_x + (int)(ux * arrow_length);
+            int tip_y = mid_y + (int)(uy * arrow_length);
+
+            // 箭头底边两点
+            int base1_x = mid_x - (int)(uy * arrow_size);
+            int base1_y = mid_y + (int)(ux * arrow_size);
+            int base2_x = mid_x + (int)(uy * arrow_size);
+            int base2_y = mid_y - (int)(ux * arrow_size);
+
+            // 绘制箭头
+            POINT arrow[3] = { {tip_x, tip_y}, {base1_x, base1_y}, {base2_x, base2_y} };
+            Polygon(hdc, arrow, 3);
+        }
+    }
+
+    // 4. 标记起点（绿色）和终点（红色）
+    Building* start = hashSearch(building_table, path[0]);
+    Building* end = hashSearch(building_table, path[path_size - 1]);
+
+    if (start) {
+        HBRUSH startBrush = CreateSolidBrush(RGB(0, 255, 0));
+        if (startBrush) {
+            HGDIOBJ hOld = SelectObject(hdc, startBrush);
+            Ellipse(hdc, start->x - 10, start->y - 10, start->x + 10, start->y + 10);
+            SelectObject(hdc, hOld);
+            DeleteObject(startBrush);
+        }
+    }
+
+    if (end) {
+        HBRUSH endBrush = CreateSolidBrush(RGB(255, 0, 0));
+        if (endBrush) {
+            HGDIOBJ hOld = SelectObject(hdc, endBrush);
+            Ellipse(hdc, end->x - 10, end->y - 10, end->x + 10, end->y + 10);
+            SelectObject(hdc, hOld);
+            DeleteObject(endBrush);
+        }
+    }
+
+    // 5. 清理资源
+    SelectObject(hdc, hOldPen);
+    SelectObject(hdc, hOldBrush);
+    DeleteObject(pathPen);
+    DeleteObject(arrowBrush);
+}
+
+/**
+ * 显示建筑信息
+ * @param hdc 设备上下文句柄
+ * @param building_id 建筑ID
+ */
+ /**
+  * 显示建筑信息
+  * @param hdc 设备上下文句柄
+  * @param building_id 建筑ID
+  */
+  /**
+   * 显示建筑信息
+   * @param hdc 设备上下文句柄
+   * @param building_id 建筑ID
+   */
+void showBuildingInfo(HDC hdc, int building_id) {
+    Building* b = hashSearch(building_table, building_id);
+    if (b == NULL) return;
+
+    // 创建信息框背景
+    HBRUSH infoBrush = CreateSolidBrush(RGB(255, 255, 255)); // 白色
+    HPEN infoPen = CreatePen(PS_SOLID, 1, RGB(0, 0, 0));     // 黑色边框
+    if (!infoBrush || !infoPen) return;
+
+    HGDIOBJ hOldBrush = SelectObject(hdc, infoBrush);
+    HGDIOBJ hOldPen = SelectObject(hdc, infoPen);
+    Rectangle(hdc, 450, 0, 600, 120);  // 绘制信息框
+
+    // 显示建筑信息
+    SetBkMode(hdc, TRANSPARENT);
+    HFONT hInfoFont = CreateFont(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_OUTLINE_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        VARIABLE_PITCH, TEXT("微软雅黑"));
+    if (hInfoFont) {
+        HFONT hOldFont = (HFONT)SelectObject(hdc, hInfoFont);
+
+        // 转换建筑名称为宽字符
+        wchar_t wname[50];
+        wchar_t wdesc[100];
+        MultiByteToWideChar(CP_ACP, 0, b->name, -1, wname, 50);
+        MultiByteToWideChar(CP_ACP, 0, b->description, -1, wdesc, 100);
+
+        // 使用宽字符输出
+        wchar_t info[200];
+        swprintf_s(info, _countof(info), L"建筑名称: %s", wname);
+        TextOut(hdc, 460, 20, info, (int)wcslen(info));
+
+        // 处理长描述（分两行显示）
+        wcscpy_s(info, _countof(info), L"功能描述: ");
+        wcsncat_s(info, _countof(info), wdesc, 10); // 第一行最多30字符
+        TextOut(hdc, 460, 50, info, (int)wcslen(info));
+
+        // 输出剩余描述（如果有）
+        if (wcslen(wdesc) > 10) {
+            wcscpy_s(info, _countof(info), L"          ");
+            wcsncat_s(info, _countof(info), wdesc + 10, 70);
+            TextOut(hdc, 460, 75, info, (int)wcslen(info));
+        }
+
+        swprintf_s(info, _countof(info), L"坐标位置: (%d, %d)", b->x, b->y);
+        TextOut(hdc, 460, 100, info, (int)wcslen(info));
+
+        SelectObject(hdc, hOldFont);
+        DeleteObject(hInfoFont);
+    }
+
+    // 恢复并删除GDI对象
+    SelectObject(hdc, hOldBrush);
+    SelectObject(hdc, hOldPen);
+    DeleteObject(infoBrush);
+    DeleteObject(infoPen);
+}
+
+/**
+ * 窗口过程函数
+ * 处理所有窗口消息
+ */
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    static int start_id = -1;    // 起点建筑ID
+    static int end_id = -1;      // 终点建筑ID
+    static POINT drag_start = { 0, 0 };  // 拖动起始点
+    static int edit_edge_mode = 0;       // 0:无操作 1:添加边 2:删除边
+    static int first_building_id = -1;   // 边编辑的第一个建筑ID
+
+    switch (msg) {
+    case WM_CREATE:
+        initializeCampusData();  // 初始化校园数据
+        break;
+
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+
+        // 绘制地图和建筑
+        drawCampusMap(hdc);
+
+        // 绘制路径（如果存在）
+        if (shortest_path && path_size > 0) {
+            drawPath(hdc, shortest_path, path_size);
+        }
+
+        // 显示建筑信息
+        if (start_id != -1) {
+            showBuildingInfo(hdc, start_id);
+        }
+        else if (end_id != -1) {
+            showBuildingInfo(hdc, end_id);
+        }
+
+        // 编辑模式提示
+        if (is_edit_mode) {
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, RGB(255, 0, 0)); // 红色文字
+
+            HFONT hFont = CreateFont(20, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_OUTLINE_PRECIS, CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY, VARIABLE_PITCH, TEXT("微软雅黑"));
+
+            if (hFont) {
+                HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+                TextOut(hdc, 20, 20, TEXT("编辑模式 (按E退出)"),
+                    (int)_tcslen(TEXT("编辑模式 (按E退出)")));
+
+                // 添加边/删除边模式提示
+                if (edit_edge_mode == 1) {
+                    TextOut(hdc, 20, 50, TEXT("添加边模式: 选择第一个建筑后按A, 再选择第二个建筑"),
+                        (int)_tcslen(TEXT("添加边模式: 选择第一个建筑后按A, 再选择第二个建筑")));
+                }
+                else if (edit_edge_mode == 2) {
+                    TextOut(hdc, 20, 50, TEXT("删除边模式: 选择第一个建筑后按D, 再选择第二个建筑"),
+                        (int)_tcslen(TEXT("删除边模式: 选择第一个建筑后按D, 再选择第二个建筑")));
+                }
+
+                SelectObject(hdc, hOldFont);
+                DeleteObject(hFont);
+            }
+        }
+
+        EndPaint(hwnd, &ps);
+        break;
+    }
+
+    case WM_LBUTTONDOWN: {
+        int x = LOWORD(lParam);
+        int y = HIWORD(lParam);
+
+        // 检查按钮点击
+        if (x >= 190 && x <= 300) {  // 在按钮的水平范围内
+            // 编辑模式按钮 (Y:800-850)
+            if (y >= 800 && y <= 850) {
+                is_edit_mode = !is_edit_mode;
+                selected_building_id = -1;
+                edit_edge_mode = 0;
+                first_building_id = -1;
+
+                MessageBox(hwnd,
+                    is_edit_mode ?
+                    L"已进入编辑模式！\n左键选择建筑，右键拖动调整位置\nA:添加边 D:删除边" :
+                    L"已退出编辑模式！",
+                    L"编辑模式",
+                    MB_OK | MB_ICONINFORMATION);
+
+                InvalidateRect(hwnd, NULL, TRUE);  // 重绘窗口
+                break;
+            }
+            // 退出系统按钮 (Y:830-880)
+            else if (y >= 830 && y <= 880) {
+                PostQuitMessage(0);
+                break;
+            }
+        }
+
+        if (is_edit_mode) {
+            // 编辑模式：选择建筑
+            for (int i = 0; i < MAX_BUILDINGS; i++) {
+                // 跳过无效建筑
+                if (buildings[i].id == -1) continue;
+
+                int dx = abs(x - buildings[i].x);
+                int dy = abs(y - buildings[i].y);
+                double distance = sqrt((double)(dx * dx + dy * dy));
+
+                // 如果点击在建筑标记范围内
+                if (distance <= 15) {
+                    selected_building_id = i;
+
+                    // 边编辑模式处理
+                    if (edit_edge_mode != 0 && first_building_id == -1) {
+                        first_building_id = selected_building_id;
+                        // 显示提示信息
+                        if (edit_edge_mode == 1) {
+                            MessageBox(hwnd,
+                                L"请选择要连接的第二个建筑（左键点击）",
+                                L"添加边",
+                                MB_OK | MB_ICONINFORMATION);
+                        }
+                        else if (edit_edge_mode == 2) {
+                            MessageBox(hwnd,
+                                L"请选择要断开连接的目标建筑（左键点击）",
+                                L"删除边",
+                                MB_OK | MB_ICONINFORMATION);
+                        }
+                    }
+                    else if (edit_edge_mode != 0 && first_building_id != -1 &&
+                        first_building_id != selected_building_id) {
+                        // 添加边模式
+                        if (edit_edge_mode == 1) {
+                            // 检查边是否已存在
+                            int exists = 0;
+                            if (campus_graph) { // 添加图有效性检查
+                                for (int j = 0; j < campus_graph->E; j++) {
+                                    if ((campus_graph->edges[j].src == first_building_id &&
+                                        campus_graph->edges[j].dest == selected_building_id) ||
+                                        (campus_graph->edges[j].src == selected_building_id &&
+                                            campus_graph->edges[j].dest == first_building_id)) {
+                                        exists = 1;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (!exists) {
+                                // 创建新图（增加一条边）
+                                int new_edge_count = campus_graph ? campus_graph->E + 1 : 1;
+                                Graph* new_graph = createGraph(MAX_BUILDINGS, new_edge_count);
+
+                                if (!new_graph) {
+                                    MessageBox(hwnd, L"创建新图失败！", L"错误", MB_ICONERROR);
+                                    break;
+                                }
+
+                                // 复制原有边
+                                if (campus_graph) {
+                                    for (int j = 0; j < campus_graph->E; j++) {
+                                        if (j < new_graph->E) {
+                                            new_graph->edges[j] = campus_graph->edges[j];
+                                        }
+                                    }
+                                }
+
+                                // 添加新边
+                                new_graph->edges[new_edge_count - 1].src = first_building_id;
+                                new_graph->edges[new_edge_count - 1].dest = selected_building_id;
+
+                                // 重建邻接表
+                                for (int j = 0; j < new_edge_count; j++) {
+                                    Building* b1 = hashSearch(building_table, new_graph->edges[j].src);
+                                    Building* b2 = hashSearch(building_table, new_graph->edges[j].dest);
+
+                                    // 添加NULL检查
+                                    if (!b1 || !b1) {
+                                        continue; // 跳过无效建筑
+                                    }
+
+                                    int dx = b1->x - b2->x;
+                                    int dy = b1->y - b2->y;
+                                    int weight = (int)sqrt(dx * dx + dy * dy);
+                                    addEdge(new_graph, new_graph->edges[j].src,
+                                        new_graph->edges[j].dest, weight, j);
+                                }
+
+                                // 替换旧图
+                                Graph* old_graph = campus_graph;
+                                campus_graph = new_graph;
+
+                                // 释放旧图内存（如果存在）
+                                if (old_graph) {
+                                    for (int j = 0; j < old_graph->V; j++) {
+                                        AdjListNode* node = old_graph->array[j].head;
+                                        while (node) {
+                                            AdjListNode* temp = node;
+                                            node = node->next;
+                                            free(temp);
+                                        }
+                                    }
+                                    free(old_graph->array);
+                                    free(old_graph->edges);
+                                    free(old_graph);
+                                }
+
+                                // 保存边数据
+                                saveEdgeData(campus_graph);
+
+                                MessageBox(hwnd, L"边添加成功！", L"成功", MB_OK | MB_ICONINFORMATION);
+                            }
+                            else {
+                                MessageBox(hwnd, L"该边已存在！", L"错误", MB_ICONERROR);
+                            }
+                        }
+                        // 删除边模式
+                        else if (edit_edge_mode == 2) {
+                            // 查找要删除的边
+                            int found_index = -1;
+                            if (campus_graph) { // 添加图有效性检查
+                                for (int j = 0; j < campus_graph->E; j++) {
+                                    if ((campus_graph->edges[j].src == first_building_id &&
+                                        campus_graph->edges[j].dest == selected_building_id) ||
+                                        (campus_graph->edges[j].src == selected_building_id &&
+                                            campus_graph->edges[j].dest == first_building_id)) {
+                                        found_index = j;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (found_index != -1 && campus_graph) {
+                                // 创建新图（减少一条边）
+                                int new_edge_count = campus_graph->E - 1;
+                                Graph* new_graph = createGraph(MAX_BUILDINGS, new_edge_count);
+
+                                if (!new_graph) {
+                                    MessageBox(hwnd, L"创建新图失败！", L"错误", MB_ICONERROR);
+                                    break;
+                                }
+
+                                // 复制未删除的边
+                                int new_index = 0;
+                                for (int j = 0; j < campus_graph->E; j++) {
+                                    if (j != found_index) {
+                                        new_graph->edges[new_index++] = campus_graph->edges[j];
+                                    }
+                                }
+
+                                // 重建邻接表
+                                for (int j = 0; j < new_edge_count; j++) {
+                                    Building* b1 = hashSearch(building_table, new_graph->edges[j].src);
+                                    Building* b2 = hashSearch(building_table, new_graph->edges[j].dest);
+
+                                    // 添加NULL检查
+                                    if (!b1 || !b1) {
+                                        continue; // 跳过无效建筑
+                                    }
+
+                                    int dx = b1->x - b2->x;
+                                    int dy = b1->y - b2->y;
+                                    int weight = (int)sqrt(dx * dx + dy * dy);
+                                    addEdge(new_graph, new_graph->edges[j].src,
+                                        new_graph->edges[j].dest, weight, j);
+                                }
+
+                                // 替换旧图
+                                Graph* old_graph = campus_graph;
+                                campus_graph = new_graph;
+
+                                // 释放旧图内存
+                                for (int j = 0; j < old_graph->V; j++) {
+                                    AdjListNode* node = old_graph->array[j].head;
+                                    while (node) {
+                                        AdjListNode* temp = node;
+                                        node = node->next;
+                                        free(temp);
+                                    }
+                                }
+                                free(old_graph->array);
+                                free(old_graph->edges);
+                                free(old_graph);
+
+                                // 保存边数据
+                                saveEdgeData(campus_graph);
+
+                                MessageBox(hwnd, L"边删除成功！", L"成功", MB_OK | MB_ICONINFORMATION);
+                            }
+                            else {
+                                MessageBox(hwnd, L"未找到该边！", L"错误", MB_ICONERROR);
+                            }
+                        }
+
+                        // 重置编辑状态
+                        edit_edge_mode = 0;
+                        first_building_id = -1;
+                    }
+
+                    InvalidateRect(hwnd, NULL, TRUE);  // 重绘
+                    break;
+                }
+            }
+        }
+        else {
+            // 普通模式：设置起点
+            for (int i = 0; i < MAX_BUILDINGS; i++) {
+                // 跳过无效建筑
+                if (buildings[i].id == -1) continue;
+
+                int dx = abs(x - buildings[i].x);
+                int dy = abs(y - buildings[i].y);
+                double distance = sqrt((double)(dx * dx + dy * dy));
+
+                if (distance <= 15) {
+                    start_id = i;
+
+                    // 如果有起点和终点，计算路径（添加图有效性检查）
+                    if (start_id != -1 && end_id != -1 && campus_graph) {
+                        int dist[MAX_BUILDINGS];
+                        int prev[MAX_BUILDINGS];
+
+                        // 确保图顶点数有效
+                        if (start_id < campus_graph->V && end_id < campus_graph->V) {
+                            dijkstra(campus_graph, start_id, dist, prev);
+
+                            if (shortest_path) {
+                                free(shortest_path);
+                                shortest_path = NULL;
+                            }
+                            shortest_path = getShortestPath(prev, end_id, &path_size);
+                            if (!shortest_path) path_size = 0;
+                        }
+                    }
+
+                    InvalidateRect(hwnd, NULL, TRUE);  // 重绘
+                    break;
+                }
+            }
+        }
+        break;
+    }
+
+    case WM_RBUTTONDOWN: {
+        int x = LOWORD(lParam);
+        int y = HIWORD(lParam);
+
+        if (is_edit_mode) {
+            // 编辑模式：开始拖动建筑
+            for (int i = 0; i < MAX_BUILDINGS; i++) {
+                // 跳过无效建筑
+                if (buildings[i].id == -1) continue;
+
+                int dx = abs(x - buildings[i].x);
+                int dy = abs(y - buildings[i].y);
+                double distance = sqrt((double)(dx * dx + dy * dy));
+
+                if (distance <= 15) {
+                    selected_building_id = i;
+                    drag_start.x = x;
+                    drag_start.y = y;
+                    SetCapture(hwnd); // 捕获鼠标
+                    break;
+                }
+            }
+        }
+        else {
+            // 普通模式：设置终点
+            for (int i = 0; i < MAX_BUILDINGS; i++) {
+                // 跳过无效建筑
+                if (buildings[i].id == -1) continue;
+
+                int dx = abs(x - buildings[i].x);
+                int dy = abs(y - buildings[i].y);
+                double distance = sqrt((double)(dx * dx + dy * dy));
+
+                if (distance <= 15) {
+                    end_id = i;
+
+                    // 如果有起点和终点，计算路径（添加图有效性检查）
+                    if (start_id != -1 && end_id != -1 && campus_graph) {
+                        int dist[MAX_BUILDINGS];
+                        int prev[MAX_BUILDINGS];
+
+                        // 确保图顶点数有效
+                        if (start_id < campus_graph->V && end_id < campus_graph->V) {
+                            dijkstra(campus_graph, start_id, dist, prev);
+
+                            if (shortest_path) {
+                                free(shortest_path);
+                                shortest_path = NULL;
+                            }
+                            shortest_path = getShortestPath(prev, end_id, &path_size);
+                            if (!shortest_path) path_size = 0;
+                        }
+                    }
+
+                    InvalidateRect(hwnd, NULL, TRUE);  // 重绘
+                    break;
+                }
+            }
+        }
+        break;
+    }
+
+    case WM_MOUSEMOVE: {
+        // 编辑模式下拖动建筑
+        if (is_edit_mode && selected_building_id != -1 && (wParam & MK_RBUTTON)) {
+            int x = LOWORD(lParam);
+            int y = HIWORD(lParam);
+
+            // 计算移动距离
+            int dx = x - drag_start.x;
+            int dy = y - drag_start.y;
+
+            // 更新建筑坐标
+            buildings[selected_building_id].x += dx;
+            buildings[selected_building_id].y += dy;
+
+            // 更新起始点
+            drag_start.x = x;
+            drag_start.y = y;
+
+            // 更新哈希表中的建筑信息
+            Building* b = &buildings[selected_building_id];
+            HashNode* node = building_table->table[hash(b->id)];
+            while (node != NULL && node->key != b->id) {
+                node = node->next;
+            }
+            if (node) node->building = *b;
+
+            // 更新所有相关边的权重（添加图有效性检查）
+            if (campus_graph) {
+                updateEdgeWeight(campus_graph, buildings[selected_building_id].id);
+            }
+
+            InvalidateRect(hwnd, NULL, TRUE);  // 重绘
+        }
+        break;
+    }
+
+    case WM_RBUTTONUP: {
+        // 结束拖动
+        if (is_edit_mode && selected_building_id != -1) {
+            selected_building_id = -1;
+            ReleaseCapture(); // 释放鼠标捕获
+
+            // 保存修改后的建筑数据
+            saveBuildingData();
+        }
+        break;
+    }
+
+    case WM_KEYDOWN:
+        if (wParam == 'E' || wParam == 'e') {  // 切换编辑模式
+            is_edit_mode = !is_edit_mode;
+            selected_building_id = -1;
+            edit_edge_mode = 0;
+            first_building_id = -1;
+
+            MessageBox(hwnd,
+                is_edit_mode ?
+                L"已进入编辑模式！\n左键选择建筑，右键拖动调整位置\nA:添加边 D:删除边" :
+                L"已退出编辑模式！",
+                L"编辑模式",
+                MB_OK | MB_ICONINFORMATION);
+
+            InvalidateRect(hwnd, NULL, TRUE);  // 重绘
+        }
+        else if (wParam == VK_SPACE) {  // 清除路径
+            start_id = end_id = -1;
+            if (shortest_path) {
+                free(shortest_path);
+                shortest_path = NULL;
+            }
+            path_size = 0;
+            InvalidateRect(hwnd, NULL, TRUE);  // 重绘
+        }
+        else if (wParam == VK_ESCAPE) {  // 退出程序
+            PostQuitMessage(0);
+        }
+        else if (is_edit_mode) {
+            // 添加边模式
+            if (wParam == 'A' || wParam == 'a') {
+                if (selected_building_id != -1) {
+                    edit_edge_mode = 1;
+                    first_building_id = selected_building_id;
+                    InvalidateRect(hwnd, NULL, TRUE);
+                }
+            }
+            // 删除边模式
+            else if (wParam == 'D' || wParam == 'd') {
+                if (selected_building_id != -1) {
+                    edit_edge_mode = 2;
+                    first_building_id = selected_building_id;
+                    InvalidateRect(hwnd, NULL, TRUE);
+                }
+            }
+        }
+        break;
+
+    case WM_DESTROY:
+        // 退出前保存数据
+        saveBuildingData();
+        if (campus_graph) saveEdgeData(campus_graph);  // 保存边数据
+        PostQuitMessage(0);  // 退出消息循环
+        break;
+
+    default:
+        return DefWindowProc(hwnd, msg, wParam, lParam); // 默认消息处理
+    }
+    return 0;
+}
+
+/**
+ * 清理全局资源
+ */
+void cleanupResources() {
+    // 释放图结构
+    if (campus_graph) {
+        // 释放所有邻接表节点
+        for (int i = 0; i < campus_graph->V; i++) {
+            AdjListNode* node = campus_graph->array[i].head;
+            while (node) {
+                AdjListNode* temp = node;
+                node = node->next;
+                free(temp);
+            }
+        }
+        // 释放图结构内存
+        free(campus_graph->array);
+        free(campus_graph->edges);
+        free(campus_graph);
+        campus_graph = NULL;
+    }
+
+    // 释放哈希表
+    if (building_table) {
+        for (int i = 0; i < HASH_SIZE; i++) {
+            HashNode* node = building_table->table[i];
+            while (node) {
+                HashNode* temp = node;
+                node = node->next;
+                free(temp);
+            }
+        }
+        free(building_table->table);
+        free(building_table);
+        building_table = NULL;
+    }
+
+    // 释放最短路径
+    if (shortest_path) {
+        free(shortest_path);
+        shortest_path = NULL;
+        path_size = 0;
+    }
+
+    // 释放位图
+    if (campus_map) {
+        DeleteObject(campus_map);
+        campus_map = NULL;
+    }
+}
+
+/**
+ * 主函数
+ * 程序入口点
+ */
+int main() {
+    // 初始化全局指针（虽然已声明为全局，但确保初始状态）
+    campus_graph = NULL;
+    building_table = NULL;
+    shortest_path = NULL;
+    campus_map = NULL;
+    path_size = 0;
+    is_edit_mode = false;
+    selected_building_id = -1;
+
+    // 获取当前实例句柄
+    HINSTANCE hInstance = GetModuleHandle(NULL);
+    int nCmdShow = SW_SHOW;
+
+    // 注册窗口类
+    const wchar_t CLASS_NAME[] = L"CampusGuideWindowClass";
+
+    WNDCLASS wc = { 0 };
+    wc.lpfnWndProc = WndProc;      // 窗口过程函数
+    wc.hInstance = hInstance;      // 当前实例
+    wc.lpszClassName = CLASS_NAME; // 类名
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW); // 光标样式
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1); // 背景色
+
+    if (!RegisterClass(&wc)) {
+        MessageBox(NULL, L"窗口注册失败!", L"错误", MB_ICONERROR);
+        return 1;
+    }
+
+    // 创建主窗口
+    hwnd = CreateWindow(
+        CLASS_NAME,
+        L"校园导览系统",            // 窗口标题
+        WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX, // 窗口样式
+        CW_USEDEFAULT, CW_USEDEFAULT, // 位置
+        WINDOW_WIDTH + 16, WINDOW_HEIGHT + 39, // 尺寸（考虑边框）
+        NULL,
+        NULL,
+        hInstance,
+        NULL
+    );
+
+    if (!hwnd) {
+        MessageBox(NULL, L"窗口创建失败!", L"错误", MB_ICONERROR);
+        return 1;
+    }
+
+    // 显示窗口
+    ShowWindow(hwnd, nCmdShow);
+    UpdateWindow(hwnd);
+
+    // 消息循环
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    // 清理资源
+    cleanupResources();
+
+    return (int)msg.wParam;
+}
